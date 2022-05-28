@@ -32,7 +32,7 @@ namespace RVP
 
         [Tooltip("How much to damp any desync.")]
         [Range(0.001f, 1f)]
-        public float smoothDamping = 0.1f;
+        public float smoothDamping = 0.05f;
 
         /// <summary>
         /// True if subscribed to events.

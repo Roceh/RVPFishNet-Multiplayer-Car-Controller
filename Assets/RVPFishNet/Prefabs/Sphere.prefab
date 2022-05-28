@@ -106,8 +106,8 @@ MonoBehaviour:
   _addedNetworkObject: {fileID: 4495509836941686305}
   _networkObjectCache: {fileID: 4495509836941686305}
   _graphicalObject: {fileID: 983822606180443897}
-  _smoothingDuration: 0.125
   _rigidbody: {fileID: 8716741970526408316}
+  smoothDamping: 0.05
 --- !u!1 &6326179919876129777
 GameObject:
   m_ObjectHideFlags: 0
