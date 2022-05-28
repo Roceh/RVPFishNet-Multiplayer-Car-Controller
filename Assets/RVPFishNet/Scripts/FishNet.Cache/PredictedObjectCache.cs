@@ -205,13 +205,8 @@ namespace RVP
         {
             if (!base.IsOwner && !base.IsServer)
             {
-                SetPreviousTransformProperties();
-                _rigidbody.transform.position = state.Position;
-                _rigidbody.transform.rotation = state.Rotation;
-                _rigidbody.velocity = state.Velocity;
-                _rigidbody.angularVelocity = state.AngularVelocity;
-                ResetToTransformPreviousProperties();
-                SetTransformMoveRates();
+                // we just place in cache as this data is already old regards the client tick
+                // so when the client reconcilates we will use this cache to fix up rb position
 
                 // move to next cache slot
                 NextReplayCacheSlot();

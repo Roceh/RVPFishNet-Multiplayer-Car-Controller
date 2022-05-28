@@ -482,17 +482,8 @@ namespace RVP
             // ignore if we are controlling this vehicle (owner and server)
             if (!base.IsServer && !base.IsOwner)
             {
-                // save visual position/rotation and update simulation
-                SetPreviousTransformProperties();
-                var reader = new Reader(stateData, this.NetworkManager);
-                _vm.SetFullState(reader);
-                ResetToTransformPreviousProperties();
-
-                // we smooth position/rotation of visual object body 
-                // FIXME: look into smoothing wheel rotation smoothing as well - currently
-                // they will turn at reduced tick rate - not a big issue but still would be nice
-                // if they were smoothly interpolated
-                SetTransformMoveRates((float) base.TimeManager.TickDelta * reconcilationTickStep);
+                // we just place in cache as this data is already old regards the client tick
+                // so when the client reconcilates we will use this cache to fix up this vehicle position
 
                 // move to next cache slot
                 NextReplayCacheSlot();
