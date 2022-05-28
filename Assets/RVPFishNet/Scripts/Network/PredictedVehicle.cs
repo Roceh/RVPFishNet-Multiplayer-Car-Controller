@@ -6,7 +6,6 @@ using FishNet.Object.Prediction;
 using FishNet.Serializing;
 using FishNet.Transporting;
 using System;
-using System.Collections.Generic;
 using System.IO;
 using UnityEngine;
 
@@ -51,10 +50,12 @@ namespace RVP
         /// </summary>
         private const uint CacheSize = 10;
 
+#if SYNC_DEBUG
         /// <summary>
         /// Used to determine current replay tick i.e. what equivilent server tick were are currenting on
         /// </summary>
         public static uint ReplayTick;
+#endif
 
         /// <summary>
         /// Bodge so other predicted items now when to send their state to the observers
@@ -117,19 +118,14 @@ namespace RVP
         private Writer _writer = new Writer();
 
         /// <summary>
-        /// This is a not very efficient method of hold cache
+        /// Holds the last received state if this is an non player controlled vehicle
         /// </summary>
-        private CachedStateInfo[] _replayCache = new CachedStateInfo[CacheSize];
+        private CachedStateInfo? _cachedStateInfo;
 
         /// <summary>
         /// Used to cache last move on server and during replaying
         /// </summary>
         private BasicInput.MoveData _lastMove;
-
-        /// <summary>
-        /// Last cache position we inserted in
-        /// </summary>
-        private int _replayCacheIndex = -1;
 
         public override void OnStartNetwork()
         {
@@ -158,7 +154,9 @@ namespace RVP
                 base.TimeManager.OnPreReconcile += TimeManager_OnPreReconcile;
                 base.TimeManager.OnPostReconcile += TimeManager_OnPostReconcile;
                 base.TimeManager.OnPreReplicateReplay += TimeManager_OnPreReplicateReplay;
+#if SYNC_DEBUG
                 base.TimeManager.OnPostReplicateReplay += TimeManager_OnPostReplicateReplay;
+#endif
             }
             else
             {
@@ -168,7 +166,9 @@ namespace RVP
                 base.TimeManager.OnPreReconcile -= TimeManager_OnPreReconcile;
                 base.TimeManager.OnPostReconcile -= TimeManager_OnPostReconcile;
                 base.TimeManager.OnPreReplicateReplay -= TimeManager_OnPreReplicateReplay;
+#if SYNC_DEBUG
                 base.TimeManager.OnPostReplicateReplay -= TimeManager_OnPostReplicateReplay;
+#endif
             }
         }
 
@@ -257,8 +257,10 @@ namespace RVP
         {
             var reader = new Reader(rd.Data, this.NetworkManager);
 
+#if SYNC_DEBUG
             ReplayTick = reader.ReadUInt32(AutoPackType.Unpacked);
-
+#endif
+      
             // sync debug - not compiled unless SYNC_DEBUG is set as global define
             StaticStateLogger.Log("************************************");
             StaticStateLogger.Log($"RECONCILE START");
@@ -303,44 +305,22 @@ namespace RVP
                 _rotationMoveRate = (distance / delta);
         }
 
-        private bool FindReplayCacheState(uint tick, out CachedStateInfo state)
-        {
-            state = default;
-
-            for (int i = 0; i < CacheSize; i++)
-            {
-                if (_replayCache[i].Tick == tick)
-                {
-                    state = _replayCache[i];
-                    return true;
-                }
-            }
-
-            return false;
-        }
-
         private void TimeManager_OnPreReplicateReplay(PhysicsScene arg1, PhysicsScene2D arg2)
         {
+#if SYNC_DEBUG
             // sync debug - not compiled unless SYNC_DEBUG is set as global define
             StaticStateLogger.Log("************************************");
             StaticStateLogger.Log($"TICK: {ReplayTick}");
+#endif
 
             if (!base.IsOwner && !base.IsServer)
             {
-                // for non server and non owner vehicles we try and get the actual state from the server for this item
-                // and use that from going forward
-                if (FindReplayCacheState(ReplayTick, out CachedStateInfo cache))
-                {
-                    var reader = new Reader(cache.Data, base.NetworkManager);
-                    _vm.SetFullState(reader);
-                    _lastMove = cache.Move;
-                }
-
                 // for non server and non owner - we want to setup the forces before fishnet calls physics simulate
                 SimulateWithMove(ref _lastMove);
             }
         }
 
+#if DEBUG_SYNC
         private void TimeManager_OnPostReplicateReplay(PhysicsScene arg1, PhysicsScene2D arg2)
         {
             if (base.IsOwner)
@@ -348,14 +328,28 @@ namespace RVP
                 ReplayTick++;
             }
         }
+#endif
 
         private void TimeManager_OnPreReconcile(NetworkBehaviour obj)
         {
             // this is so we can restore the visual state to what it was and lerp to new visual position/rotation after reconcile is done
             SetPreviousTransformProperties();
-            
-            // reset to no move
-            _lastMove = default;
+
+            // if this is a non player vehicle we want to simulate it using last received data (if available)
+            if (!base.IsOwner && !base.IsServer)
+            {
+                // reset to no move
+                _lastMove = default;
+
+                // have we received info about the state of this vehicle on the server ?
+                // if we haven't we just simulate from this point 
+                if (_cachedStateInfo.HasValue)
+                {
+                    var reader = new Reader(_cachedStateInfo.Value.Data, base.NetworkManager);
+                    _vm.SetFullState(reader);
+                    _lastMove = _cachedStateInfo.Value.Move;
+                }
+            }
         }
 
         private void TimeManager_OnPostReconcile(NetworkBehaviour obj)
@@ -407,11 +401,14 @@ namespace RVP
                 if ((localTick % reconcilationTickStep) == 0)
                 {
                     // tell other clients the current state 
-                    SendVehicleToObservers(localTick + 1);
+                    SendVehicleToObservers();
 
                     // create reconcilation data
                     _writer.Reset(this.NetworkManager);
+
+#if SYNC_DEBUG
                     _writer.WriteUInt32(localTick + 1, AutoPackType.Unpacked);
+#endif
 
                     // sync debug - not compiled unless SYNC_DEBUG is set as global define
                     StaticStateLogger.Log("************************************");
@@ -455,7 +452,7 @@ namespace RVP
             MoveToTarget();
         }
 
-        private void SendVehicleToObservers(uint tick)
+        private void SendVehicleToObservers()
         {
             _writer.Reset();
             _vm.GetFullState(_writer);
@@ -465,19 +462,12 @@ namespace RVP
             Array.Copy(_writer.GetBuffer(), stateData, _writer.Length);
             
             // send the move and state data to the other clients
-            ObserversSendVehicleState(tick, _lastMove, stateData);
+            ObserversSendVehicleState(_lastMove, stateData);
         }
 
-        private void NextReplayCacheSlot()
-        {
-            // get next cache slot
-            _replayCacheIndex++;
-            if (_replayCacheIndex >= _replayCache.Length)
-                _replayCacheIndex = 0;
-        }
 
         [ObserversRpc(IncludeOwner = false, BufferLast = true)]
-        private void ObserversSendVehicleState(uint tick, BasicInput.MoveData lastMove, byte[] stateData, Channel channel = Channel.Unreliable)
+        private void ObserversSendVehicleState(BasicInput.MoveData lastMove, byte[] stateData, Channel channel = Channel.Unreliable)
         {
             // ignore if we are controlling this vehicle (owner and server)
             if (!base.IsServer && !base.IsOwner)
@@ -485,17 +475,13 @@ namespace RVP
                 // we just place in cache as this data is already old regards the client tick
                 // so when the client reconcilates we will use this cache to fix up this vehicle position
 
-                // move to next cache slot
-                NextReplayCacheSlot();
-
                 // store state in cache slot
-                _replayCache[_replayCacheIndex] = new CachedStateInfo { Tick = tick, Move = lastMove, Data = stateData };
+                _cachedStateInfo = new CachedStateInfo { Move = lastMove, Data = stateData };
             }
         }
 
         public struct CachedStateInfo
         {
-            public uint Tick;
             public BasicInput.MoveData Move;
             public byte[] Data;
         }

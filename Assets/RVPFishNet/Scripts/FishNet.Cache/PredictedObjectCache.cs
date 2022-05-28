@@ -7,8 +7,7 @@ using UnityEngine;
 namespace RVP
 {
     /// <summary>
-    /// This is just until FGG implements a proper solution for caching previous state during preconcile. Its based upon his idea!
-    /// This is a bit of a bodge as it gets the current Reconcile tick from the PredicatedVehicle static value which is not good.
+    /// This can probably be replaced with the normal one now (once it has had the Update fix) - I thought i was doing something i wasn't!
     /// </summary>
     public partial class PredictedObjectCache : NetworkBehaviour
     {
@@ -16,11 +15,6 @@ namespace RVP
         /// How often to synchronize values from server to clients when no changes have been detected.
         /// </summary>
         protected const float SEND_INTERVAL = 1f;
-
-        /// <summary>
-        /// How many server states we will save
-        /// </summary>
-        private const uint CacheSize = 10;
 
         /// <summary>
         /// Transform which holds the graphical features of this object. This transform will be smoothed when desynchronizations occur.
@@ -80,14 +74,9 @@ namespace RVP
         private float _rotationMoveRate;
 
         /// <summary>
-        /// Index of last cache we stored
+        /// Last sent state
         /// </summary>
-        private uint _replayCacheIndex;
-
-        /// <summary>
-        /// This is a not very efficient method caching state
-        /// </summary>
-        private CachedRigidbodyState[] _replayCache = new CachedRigidbodyState[CacheSize];
+        private RigidbodyState? _cachedRigidbodyState;
 
         public override void OnStartNetwork()
         {
@@ -136,7 +125,7 @@ namespace RVP
                 // ok this is a bit greed - its sending its position regrdless of its moving or not
                 if ((localTick % PredictedVehicle.ReconcilationGlobalTickStep) == 0)
                 {
-                    SendRigidbodyState(localTick + 1);
+                    SendRigidbodyState();
                 }
             }
         }
@@ -147,6 +136,14 @@ namespace RVP
         protected virtual void TimeManager_OnPreReconcile(NetworkBehaviour obj)
         {
             SetPreviousTransformProperties();
+
+            if (!base.IsOwner && !base.IsServer && _cachedRigidbodyState.HasValue)
+            {
+                _rigidbody.transform.position = _cachedRigidbodyState.Value.Position;
+                _rigidbody.transform.rotation = _cachedRigidbodyState.Value.Rotation;
+                _rigidbody.velocity = _cachedRigidbodyState.Value.Velocity;
+                _rigidbody.angularVelocity = _cachedRigidbodyState.Value.AngularVelocity;
+            }
         }
 
         /// <summary>
@@ -175,7 +172,7 @@ namespace RVP
         /// <summary>
         /// Sends current states of this object to client.
         /// </summary>
-        private void SendRigidbodyState(uint tick)
+        private void SendRigidbodyState()
         {
             RigidbodyState state = new RigidbodyState
             {
@@ -185,15 +182,7 @@ namespace RVP
                 AngularVelocity = _rigidbody.angularVelocity
             };
 
-            ObserversSendRigidbodyState(tick, state);
-        }
-
-        private void NextReplayCacheSlot()
-        {
-            // get next cache slot
-            _replayCacheIndex++;
-            if (_replayCacheIndex >= _replayCache.Length)
-                _replayCacheIndex = 0;
+            ObserversSendRigidbodyState(state);
         }
 
         /// <summary>
@@ -201,48 +190,15 @@ namespace RVP
         /// </summary>
         /// <param name="state"></param>
         [ObserversRpc(IncludeOwner = false, BufferLast = true)]
-        private void ObserversSendRigidbodyState(uint tick, RigidbodyState state, Channel channel = Channel.Unreliable)
+        private void ObserversSendRigidbodyState(RigidbodyState state, Channel channel = Channel.Unreliable)
         {
             if (!base.IsOwner && !base.IsServer)
             {
                 // we just place in cache as this data is already old regards the client tick
                 // so when the client reconcilates we will use this cache to fix up rb position
 
-                // move to next cache slot
-                NextReplayCacheSlot();
-
                 // store state in cache slot
-                _replayCache[_replayCacheIndex] = new CachedRigidbodyState { Tick = tick, State = state };
-            }
-        }
-
-        private bool FindReplayCacheState(uint tick, out CachedRigidbodyState state)
-        {
-            state = default;
-
-            for (int i = 0; i < CacheSize; i++)
-            {
-                if (_replayCache[i].Tick == tick)
-                {
-                    state = _replayCache[i];
-                    return true;
-                }
-            }
-
-            return false;
-        }
-
-        private void TimeManager_OnPreReplicateReplay(PhysicsScene ps, PhysicsScene2D ps2d)
-        {
-            if (!base.IsOwner && !base.IsServer)
-            {
-                if (FindReplayCacheState(PredictedVehicle.ReplayTick, out CachedRigidbodyState cache))
-                {
-                    _rigidbody.transform.position = cache.State.Position;
-                    _rigidbody.transform.rotation = cache.State.Rotation;
-                    _rigidbody.velocity = cache.State.Velocity;
-                    _rigidbody.angularVelocity = cache.State.AngularVelocity;
-                }
+                _cachedRigidbodyState = state;
             }
         }
 
@@ -266,13 +222,11 @@ namespace RVP
             {
                 base.TimeManager.OnPreTick += TimeManager_OnPreTick;
                 base.TimeManager.OnPreReconcile += TimeManager_OnPreReconcile;
-                base.TimeManager.OnPreReplicateReplay += TimeManager_OnPreReplicateReplay;
             }
             else
             {
                 base.TimeManager.OnPreTick -= TimeManager_OnPreTick;
                 base.TimeManager.OnPreReconcile -= TimeManager_OnPreReconcile;
-                base.TimeManager.OnPreReplicateReplay -= TimeManager_OnPreReplicateReplay;
             }
 
             _subscribed = subscribe;
@@ -355,12 +309,6 @@ namespace RVP
             public Quaternion Rotation;
             public Vector3 Velocity;
             public Vector3 AngularVelocity;
-        }
-
-        public struct CachedRigidbodyState
-        {
-            public uint Tick;
-            public RigidbodyState State;
         }
     }
 }
