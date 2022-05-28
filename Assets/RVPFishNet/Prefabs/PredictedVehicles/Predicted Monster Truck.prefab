@@ -8160,7 +8160,6 @@ MonoBehaviour:
   _networkObjectCache: {fileID: 2214024810688115840}
   vehicleVisualRootObject: {fileID: 8249390874861360825}
   vehicleScriptRootObject: {fileID: 5704922014335493345}
-  smoothingDuration: 0.125
   reconcilationTickStep: 10
 --- !u!1 &236706313730464673
 GameObject:

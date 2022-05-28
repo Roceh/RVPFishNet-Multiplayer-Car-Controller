@@ -24,19 +24,15 @@ namespace RVP
         private Transform _graphicalObject;
 
         /// <summary>
-        /// Duration to smooth desynchronizations over.
-        /// </summary>
-        [Tooltip("Duration to smooth desynchronizations over.")]
-        [Range(0.01f, 0.5f)]
-        [SerializeField]
-        private float _smoothingDuration = 0.125f;
-
-        /// <summary>
         /// Rigidbody to predict.
         /// </summary>
         [Tooltip("Rigidbody to predict.")]
         [SerializeField]
         private Rigidbody _rigidbody;
+
+        [Tooltip("How much to damp any desync.")]
+        [Range(0.001f, 1f)]
+        public float smoothDamping = 0.1f;
 
         /// <summary>
         /// True if subscribed to events.
@@ -59,19 +55,9 @@ namespace RVP
         private Vector3 _instantiatedLocalPosition;
 
         /// <summary>
-        /// How quickly to move towards TargetPosition.
-        /// </summary>
-        private float _positionMoveRate;
-
-        /// <summary>
         /// Local rotation of transform when instantiated.
         /// </summary>
         private Quaternion _instantiatedLocalRotation;
-
-        /// <summary>
-        /// How quickly to move towards TargetRotation.
-        /// </summary>
-        private float _rotationMoveRate;
 
         /// <summary>
         /// Last sent state
@@ -114,7 +100,6 @@ namespace RVP
             if (base.IsClient)
             {
                 ResetToTransformPreviousProperties();
-                SetTransformMoveRates();
             }
 
             // another bodge - there are going to multiple vehicles - this assumes the reconcilation rate is the same on all
@@ -137,13 +122,18 @@ namespace RVP
         {
             SetPreviousTransformProperties();
 
-            if (!base.IsOwner && !base.IsServer && _cachedRigidbodyState.HasValue)
+            if (_cachedRigidbodyState.HasValue)
             {
                 _rigidbody.transform.position = _cachedRigidbodyState.Value.Position;
                 _rigidbody.transform.rotation = _cachedRigidbodyState.Value.Rotation;
                 _rigidbody.velocity = _cachedRigidbodyState.Value.Velocity;
                 _rigidbody.angularVelocity = _cachedRigidbodyState.Value.AngularVelocity;
             }
+        }
+
+        private void TimeManager_OnPostReconcile(NetworkBehaviour obj)
+        {
+            ResetToTransformPreviousProperties();
         }
 
         /// <summary>
@@ -222,11 +212,13 @@ namespace RVP
             {
                 base.TimeManager.OnPreTick += TimeManager_OnPreTick;
                 base.TimeManager.OnPreReconcile += TimeManager_OnPreReconcile;
+                base.TimeManager.OnPostReconcile += TimeManager_OnPostReconcile;
             }
             else
             {
                 base.TimeManager.OnPreTick -= TimeManager_OnPreTick;
                 base.TimeManager.OnPreReconcile -= TimeManager_OnPreReconcile;
+                base.TimeManager.OnPostReconcile -= TimeManager_OnPostReconcile;
             }
 
             _subscribed = subscribe;
@@ -251,38 +243,10 @@ namespace RVP
         /// </summary>
         private void MoveToTarget()
         {
-            //Not set, meaning movement doesnt need to happen or completed.
-            if (_positionMoveRate == -1f && _rotationMoveRate == -1f)
-                return;
-
-            Transform t = _graphicalObject;
+            Transform t = _graphicalObject.transform;
             float delta = Time.deltaTime;
-            if (_positionMoveRate > 0f)
-                t.localPosition = Vector3.MoveTowards(t.localPosition, _instantiatedLocalPosition, _positionMoveRate * delta);
-            if (_rotationMoveRate > 0f)
-                t.localRotation = Quaternion.RotateTowards(t.localRotation, _instantiatedLocalRotation, _rotationMoveRate * delta);
-
-            if (GraphicalObjectMatches(_instantiatedLocalPosition, _instantiatedLocalRotation))
-            {
-                _positionMoveRate = -1f;
-                _rotationMoveRate = -1f;
-            }
-        }
-
-        /// <summary>
-        /// Sets Position and Rotation move rates to reach Target datas.
-        /// </summary>
-        /// <param name="durationOverride">Smooth of this duration when not set to -1f. Otherwise TimeManager.TickDelta is used.</param>
-        private void SetTransformMoveRates(float durationOverride = -1f)
-        {
-            float delta = (durationOverride == -1f) ? (float)base.TimeManager.TickDelta : durationOverride;
-            float distance;
-
-            distance = Vector3.Distance(_instantiatedLocalPosition, _graphicalObject.localPosition);
-            _positionMoveRate = (distance / delta);
-            distance = Quaternion.Angle(_instantiatedLocalRotation, _graphicalObject.localRotation);
-            if (distance > 0f)
-                _rotationMoveRate = (distance / delta);
+            t.localPosition = Vector3.Lerp(t.localPosition, _instantiatedLocalPosition, delta / smoothDamping);
+            t.localRotation = Quaternion.Slerp(t.localRotation, _instantiatedLocalRotation, delta / smoothDamping);
         }
 
         /// <summary>

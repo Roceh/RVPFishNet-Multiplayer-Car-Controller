@@ -29,26 +29,18 @@ namespace RVP
         public GameObject vehicleScriptRootObject;
 
         /// <summary>
-        /// Duration to smooth desynchronizations over.
-        /// </summary>
-        [Tooltip("Duration to smooth desynchronizations over.")]
-        [Range(0.01f, 0.5f)]
-        public float smoothingDuration = 0.125f;
-
-        /// <summary>
         /// What interval to send Reconcilation back to client
         /// </summary>
         [Tooltip("How often (every n ticks) to send reconcilation to client.")]
         [Range(1, 50)]
         public uint reconcilationTickStep = 10;
 
-        // -=-=-=-= LOCAL STATE =-=-=-=-
+        [Tooltip("How much to damp any desync.")]
+        [Range(0.001f, 1f)]
+        public float smoothDamping = 0.05f;
 
-        /// <summary>
-        /// Number of previous server states to cache so we can restore them during reconcile when we are
-        /// simulating an non player controlled vehicle on the client
-        /// </summary>
-        private const uint CacheSize = 10;
+
+        // -=-=-=-= LOCAL STATE =-=-=-=-
 
 #if SYNC_DEBUG
         /// <summary>
@@ -98,19 +90,9 @@ namespace RVP
         private Vector3 _instantiatedLocalPosition;
 
         /// <summary>
-        /// How quickly to move towards TargetPosition.
-        /// </summary>
-        private float _positionMoveRate;
-
-        /// <summary>
         /// Local rotation of visual object transform when instantiated.
         /// </summary>
         private Quaternion _instantiatedLocalRotation;
-
-        /// <summary>
-        /// How quickly to move towards TargetRotation.
-        /// </summary>
-        private float _rotationMoveRate;
 
         /// <summary>
         /// Used to read data from a stream
@@ -275,34 +257,10 @@ namespace RVP
 
         private void MoveToTarget()
         {
-            // Not set, meaning movement doesnt need to happen or completed.
-            if (_positionMoveRate == -1f && _rotationMoveRate == -1f)
-                return;
-
             Transform t = vehicleVisualRootObject;
             float delta = Time.deltaTime;
-            if (_positionMoveRate > 0f)
-                t.localPosition = Vector3.MoveTowards(t.localPosition, _instantiatedLocalPosition, _positionMoveRate * delta);
-            if (_rotationMoveRate > 0f)
-                t.localRotation = Quaternion.RotateTowards(t.localRotation, _instantiatedLocalRotation, _rotationMoveRate * delta);
-
-            if (GraphicalObjectMatches(_instantiatedLocalPosition, _instantiatedLocalRotation))
-            {
-                _positionMoveRate = -1f;
-                _rotationMoveRate = -1f;
-            }
-        }
-
-        private void SetTransformMoveRates(float durationOverride = -1f)
-        {
-            float delta = (durationOverride == -1f) ? (float)base.TimeManager.TickDelta : durationOverride;
-            float distance;
-
-            distance = Vector3.Distance(_instantiatedLocalPosition, vehicleVisualRootObject.localPosition);
-            _positionMoveRate = (distance / delta);
-            distance = Quaternion.Angle(_instantiatedLocalRotation, vehicleVisualRootObject.localRotation);
-            if (distance > 0f)
-                _rotationMoveRate = (distance / delta);
+            t.localPosition = Vector3.Lerp(t.localPosition, _instantiatedLocalPosition, delta / smoothDamping);
+            t.localRotation = Quaternion.Slerp(t.localRotation, _instantiatedLocalRotation, delta / smoothDamping);
         }
 
         private void TimeManager_OnPreReplicateReplay(PhysicsScene arg1, PhysicsScene2D arg2)
@@ -356,9 +314,6 @@ namespace RVP
         {
             // Set transform back to where it was before reconcile so there's no visual disturbances.
             vehicleVisualRootObject.SetPositionAndRotation(_previousPosition, _previousRotation);
-
-            // determine rate to move visual object position/rotation to
-            SetTransformMoveRates(smoothingDuration);
         }
 
         private void TimeManager_OnPreTick()
@@ -426,13 +381,8 @@ namespace RVP
                 }
             }
 
-            if (base.IsOwner)
-            {
-                // reset visual object to what it was before physics step
-                ResetToTransformPreviousProperties();
-                // determine rate of change to lerp to new visual position/rotation
-                SetTransformMoveRates();
-            }
+            // reset visual object to what it was before physics step
+            ResetToTransformPreviousProperties();
         }
 
         private void SetPreviousTransformProperties()
