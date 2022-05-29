@@ -7,15 +7,10 @@ using UnityEngine;
 namespace RVP
 {
     /// <summary>
-    /// This can probably be replaced with the normal one now (once it has had the Update fix) - I thought i was doing something i wasn't!
+    /// This is now mostly identical to the fishnet one, the only differences are smoothing method (constant smooth damp) and the fact it does not update rigidbody until reconcilation
     /// </summary>
     public partial class PredictedObjectCache : NetworkBehaviour
     {
-        /// <summary>
-        /// How often to synchronize values from server to clients when no changes have been detected.
-        /// </summary>
-        protected const float SEND_INTERVAL = 1f;
-
         /// <summary>
         /// Transform which holds the graphical features of this object. This transform will be smoothed when desynchronizations occur.
         /// </summary>
@@ -30,9 +25,9 @@ namespace RVP
         [SerializeField]
         private Rigidbody _rigidbody;
 
-        [Tooltip("How much to damp any desync.")]
-        [Range(0.001f, 1f)]
-        public float smoothDamping = 0.05f;
+        [Tooltip("Duration to smooth desynchronizations over.")]
+        [Range(0.01f, 0.5f)]
+        public float smoothingDuration = 0.05f;
 
         /// <summary>
         /// True if subscribed to events.
@@ -63,6 +58,16 @@ namespace RVP
         /// Last sent state
         /// </summary>
         private RigidbodyState? _cachedRigidbodyState;
+
+        /// <summary>
+        /// Velocity for smoothing of position
+        /// </summary>
+        private Vector3 _smoothingPositionVelocity;
+
+        /// <summary>
+        /// Velocity for smoothing of rotation
+        /// </summary>
+        private float _smoothingRotationVelocity;
 
         public override void OnStartNetwork()
         {
@@ -134,15 +139,6 @@ namespace RVP
         private void TimeManager_OnPostReconcile(NetworkBehaviour obj)
         {
             ResetToTransformPreviousProperties();
-        }
-
-        /// <summary>
-        /// Returns if this transform matches arguments.
-        /// </summary>
-        /// <returns></returns>
-        protected bool GraphicalObjectMatches(Vector3 position, Quaternion rotation)
-        {
-            return (_graphicalObject.localPosition == position && _graphicalObject.localRotation == rotation);
         }
 
         private void Awake()
@@ -238,15 +234,27 @@ namespace RVP
             }
         }
 
+        public static Quaternion SmoothDampQuaternion(Quaternion current, Quaternion target, ref float AngularVelocity, float smoothTime)
+        {
+            var delta = Quaternion.Angle(current, target);
+            if (delta > 0.0f)
+            {
+                var t = Mathf.SmoothDampAngle(delta, 0.0f, ref AngularVelocity, smoothTime);
+                t = 1.0f - t / delta;
+                return Quaternion.Slerp(current, target, t);
+            }
+
+            return current;
+        }
+
         /// <summary>
         /// Moves transform to target values.
         /// </summary>
         private void MoveToTarget()
         {
             Transform t = _graphicalObject.transform;
-            float delta = Time.deltaTime;
-            t.localPosition = Vector3.Lerp(t.localPosition, _instantiatedLocalPosition, delta / smoothDamping);
-            t.localRotation = Quaternion.Slerp(t.localRotation, _instantiatedLocalRotation, delta / smoothDamping);
+            t.localPosition = Vector3.SmoothDamp(t.localPosition, _instantiatedLocalPosition, ref _smoothingPositionVelocity, smoothingDuration);
+            t.localRotation = SmoothDampQuaternion(t.localRotation, _instantiatedLocalRotation, ref _smoothingRotationVelocity, smoothingDuration);
         }
 
         /// <summary>

@@ -35,10 +35,9 @@ namespace RVP
         [Range(1, 50)]
         public uint reconcilationTickStep = 10;
 
-        [Tooltip("How much to damp any desync.")]
-        [Range(0.001f, 1f)]
-        public float smoothDamping = 0.05f;
-
+        [Tooltip("Duration to smooth desynchronizations over.")]
+        [Range(0.01f, 0.5f)]
+        public float smoothingDuration = 0.05f;
 
         // -=-=-=-= LOCAL STATE =-=-=-=-
 
@@ -108,6 +107,16 @@ namespace RVP
         /// Used to cache last move on server and during replaying
         /// </summary>
         private BasicInput.MoveData _lastMove;
+
+        /// <summary>
+        /// Velocity for smoothing of position
+        /// </summary>
+        private Vector3 _smoothingPositionVelocity = Vector3.zero;
+
+        /// <summary>
+        /// Velocity for smoothing of rotation
+        /// </summary>
+        private float _smoothingRotationVelocity;
 
         public override void OnStartNetwork()
         {
@@ -250,17 +259,27 @@ namespace RVP
             _vm.SetFullState(reader);
         }
 
-        private bool GraphicalObjectMatches(Vector3 position, Quaternion rotation)
+        public static Quaternion SmoothDampQuaternion(Quaternion current, Quaternion target, ref float AngularVelocity, float smoothTime)
         {
-            return (vehicleVisualRootObject.localPosition == position && vehicleVisualRootObject.localRotation == rotation);
+            var delta = Quaternion.Angle(current, target);
+            if (delta > 0.0f)
+            {
+                var t = Mathf.SmoothDampAngle(delta, 0.0f, ref AngularVelocity, smoothTime);
+                t = 1.0f - t / delta;
+                return Quaternion.Slerp(current, target, t);
+            }
+
+            return current;
         }
 
+        /// <summary>
+        /// Moves transform to target values.
+        /// </summary>
         private void MoveToTarget()
         {
-            Transform t = vehicleVisualRootObject;
-            float delta = Time.deltaTime;
-            t.localPosition = Vector3.Lerp(t.localPosition, _instantiatedLocalPosition, delta / smoothDamping);
-            t.localRotation = Quaternion.Slerp(t.localRotation, _instantiatedLocalRotation, delta / smoothDamping);
+            Transform t = vehicleVisualRootObject.transform;
+            t.localPosition = Vector3.SmoothDamp(t.localPosition, _instantiatedLocalPosition, ref _smoothingPositionVelocity, smoothingDuration);
+            t.localRotation = SmoothDampQuaternion(t.localRotation, _instantiatedLocalRotation, ref _smoothingRotationVelocity, smoothingDuration);
         }
 
         private void TimeManager_OnPreReplicateReplay(PhysicsScene arg1, PhysicsScene2D arg2)
