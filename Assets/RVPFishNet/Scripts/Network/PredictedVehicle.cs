@@ -28,13 +28,6 @@ namespace RVP
         [Tooltip("Root object holding all car scripting game objects")]
         public GameObject vehicleScriptRootObject;
 
-        /// <summary>
-        /// What interval to send Reconcilation back to client
-        /// </summary>
-        [Tooltip("How often (every n ticks) to send reconcilation to client.")]
-        [Range(1, 50)]
-        public uint reconcilationTickStep = 10;
-
         [Tooltip("Duration to smooth desynchronizations over.")]
         [Range(0.01f, 0.5f)]
         public float smoothingDuration = 0.05f;
@@ -47,11 +40,6 @@ namespace RVP
         /// </summary>
         public static uint ReplayTick;
 #endif
-
-        /// <summary>
-        /// Bodge so other predicted items now when to send their state to the observers
-        /// </summary>
-        public static uint ReconcilationGlobalTickStep;
 
         /// <summary>
         /// True if we have subcribed to time manager tick events
@@ -121,8 +109,6 @@ namespace RVP
         public override void OnStartNetwork()
         {
             base.OnStartNetwork();
-
-            ReconcilationGlobalTickStep = reconcilationTickStep;
 
             _instantiatedLocalPosition = vehicleVisualRootObject.localPosition;
             _instantiatedLocalRotation = vehicleVisualRootObject.localRotation;
@@ -372,7 +358,7 @@ namespace RVP
                 uint localTick = base.TimeManager.LocalTick;
 
                 // we reconcilate at reduce tick step for bandwidth saving!
-                if ((localTick % reconcilationTickStep) == 0)
+                if ((localTick % GlobalReconcilation.Instance.TicksBetweenReconcilation) == 0)
                 {
                     // tell other clients the current state 
                     SendVehicleToObservers();

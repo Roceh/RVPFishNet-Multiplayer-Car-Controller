@@ -107,16 +107,10 @@ namespace RVP
                 ResetToTransformPreviousProperties();
             }
 
-            // another bodge - there are going to multiple vehicles - this assumes the reconcilation rate is the same on all
-            if (base.IsServer && PredictedVehicle.ReconcilationGlobalTickStep != 0)
+            if (base.IsServer && GlobalReconcilation.Instance.TicksBetweenReconcilation != 0 &&
+                (base.TimeManager.LocalTick % GlobalReconcilation.Instance.TicksBetweenReconcilation) == 0)
             {
-                uint localTick = base.TimeManager.LocalTick;
-
-                // ok this is a bit greed - its sending its position regrdless of its moving or not
-                if ((localTick % PredictedVehicle.ReconcilationGlobalTickStep) == 0)
-                {
-                    SendRigidbodyState();
-                }
+                SendRigidbodyState();
             }
         }
 
